@@ -4,7 +4,7 @@ Builds the [LibreOffice](https://www.libreoffice.org) core for Android so PxScan
 
 ## Building
 
-Run the **Build engine** workflow from the Actions tab and pick a LibreOffice core tag. It builds `arm64-v8a`, `armeabi-v7a` and `x86_64` with NDK 27.1.12297006 and publishes a release named `engine-<tag>`.
+Run the **Build engine** workflow from the Actions tab and pick a LibreOffice core tag. It builds `arm64-v8a`, `armeabi-v7a` and `x86_64` with NDK 28.2.13676358, checks that the 64-bit libraries are 16 KB page aligned, and publishes a release named `engine-<tag>-r<run>`.
 
 ## Release contents
 

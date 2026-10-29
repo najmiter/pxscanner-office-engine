@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 env:
-  NDK_VERSION: 27.1.12297006
+  NDK_VERSION: 28.2.13676358
   LO_TAG: ${{ inputs.libreoffice_tag }}
 
 jobs:
@@ -102,6 +102,22 @@ jobs:
           make
           ccache --show-stats
 
+      - name: Check 16 KB page alignment
+        if: matrix.abi != 'armeabi-v7a'
+        working-directory: /mnt/lo/core
+        run: |
+          readelf="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          status=0
+          for lib in android/jniLibs/${{ matrix.abi }}/*.so; do
+            for align in $("$readelf" -lW "$lib" | awk '$1 == "LOAD" { print $NF }'); do
+              if [ $((align)) -lt 16384 ]; then
+                echo "::error::$lib has a LOAD segment aligned to $align"
+                status=1
+              fi
+            done
+          done
+          exit $status
+
       - name: Package
         working-directory: /mnt/lo/core
         run: |
@@ -152,7 +168,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "engine-$LO_TAG" dist/* \
+          gh release create "engine-$LO_TAG-r${{ github.run_number }}" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Engine $LO_TAG" \
+            --title "Engine $LO_TAG (build ${{ github.run_number }})" \
             --notes "LibreOffice $LO_TAG built for Android with NDK $NDK_VERSION."
