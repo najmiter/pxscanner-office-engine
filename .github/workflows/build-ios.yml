@@ -1,0 +1,161 @@
+name: Build iOS engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      libreoffice_tag:
+        description: LibreOffice core tag to build
+        required: true
+        default: libreoffice-26.8.2.2
+
+permissions:
+  contents: write
+
+env:
+  LO_TAG: ${{ inputs.libreoffice_tag }}
+  XCODE_APP: /Applications/Xcode_27.1.app
+
+jobs:
+  build:
+    name: Build iOS arm64
+    runs-on: xcode-27
+    timeout-minutes: 355
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/../ccache
+      CCACHE_MAXSIZE: 5G
+      CCACHE_COMPRESS: "true"
+      TARBALLS: ${{ github.workspace }}/../lo-tarballs
+      SRC: ${{ github.workspace }}/../lo/core
+    steps:
+      - name: Select Xcode
+        run: |
+          sudo xcode-select --switch "$XCODE_APP"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Free disk space
+        run: |
+          df -h /
+          for app in /Applications/Xcode_*.app; do
+            resolved="$(cd "$app" && pwd -P)"
+            if [ "$resolved" != "$(cd "$XCODE_APP" && pwd -P)" ]; then
+              sudo rm -rf "$app"
+            fi
+          done
+          xcrun simctl runtime delete all
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          brew install autoconf automake gperf bison flex ccache
+          echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix flex)/bin" >> "$GITHUB_PATH"
+          mkdir -p "$CCACHE_DIR" "$TARBALLS"
+
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-ios-arm64-${{ env.LO_TAG }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-ios-arm64-${{ env.LO_TAG }}-
+            ccache-ios-arm64-
+
+      - name: Restore external tarballs
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TARBALLS }}
+          key: tarballs-ios-${{ env.LO_TAG }}
+          restore-keys: |
+            tarballs-ios-
+
+      - name: Check out LibreOffice
+        run: git clone --depth 1 --branch "$LO_TAG" https://github.com/LibreOffice/core.git "$SRC"
+
+      - name: Configure
+        working-directory: ${{ env.SRC }}
+        run: |
+          bison --version | head -1
+          flex --version
+          cat > autogen.input <<EOF
+          --with-distro=LibreOfficeiOS
+          --with-external-tar=$TARBALLS
+          --with-parallelism=$(sysctl -n hw.ncpu)
+          EOF
+          ./autogen.sh
+
+      - name: Build
+        working-directory: ${{ env.SRC }}
+        run: |
+          ccache --zero-stats
+          make
+          ccache --show-stats
+          df -h /
+
+      - name: Package
+        working-directory: ${{ env.SRC }}
+        run: |
+          gen=workdir/CustomTarget/ios
+          test -f "$gen/ios-all-static-libs.list"
+          test -f "$gen/native-code.h"
+          test -d "$gen/resources"
+          out="$GITHUB_WORKSPACE/out/engine"
+          mkdir -p "$out/lib" "$out/include" "$out/licenses"
+          python3 - "$gen/ios-all-static-libs.list" "$PWD" "$out" <<'PY'
+          import os, shutil, sys
+          listing, root, out = sys.argv[1], os.path.realpath(sys.argv[2]), sys.argv[3]
+          names = []
+          for token in open(listing).read().split():
+              path = os.path.realpath(token if os.path.isabs(token) else os.path.join(root, token))
+              if not os.path.isfile(path):
+                  sys.exit(f"missing static library: {token}")
+              relative = os.path.relpath(path, root)
+              target = os.path.join(out, "lib", relative)
+              os.makedirs(os.path.dirname(target), exist_ok=True)
+              shutil.copy2(path, target)
+              names.append(relative)
+          with open(os.path.join(out, "static-libs.list"), "w") as handle:
+              handle.write("\n".join(names) + "\n")
+          print(f"{len(names)} static libraries")
+          PY
+          cp "$gen/native-code.h" "$out/include/"
+          cp -R include/LibreOfficeKit "$out/include/"
+          cp -R "$gen/resources" "$out/resources"
+          find instdir -maxdepth 2 \( -iname 'LICENSE*' -o -iname 'NOTICE*' -o -iname 'CREDITS*' \) -type f \
+            -exec cp {} "$out/licenses/" \;
+          printf 'libreoffice_tag=%s\nlibreoffice_commit=%s\nplatform=iphoneos\narch=arm64\nxcode=%s\nsdk=%s\n' \
+            "$LO_TAG" "$(git rev-parse HEAD)" "$(xcodebuild -version | head -1)" \
+            "$(xcrun --sdk iphoneos --show-sdk-version)" > "$out/BUILD_INFO"
+          tar -C "$out" -czf "$GITHUB_WORKSPACE/out/pxscanner-office-engine-ios-arm64.tar.gz" .
+          du -sh "$out"/* "$GITHUB_WORKSPACE/out/pxscanner-office-engine-ios-arm64.tar.gz"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-ios-arm64
+          path: out/pxscanner-office-engine-ios-arm64.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download engine
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "engine-ios-$LO_TAG-r${{ github.run_number }}" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "iOS engine $LO_TAG (build ${{ github.run_number }})" \
+            --notes "LibreOffice $LO_TAG built for iOS arm64 devices with Xcode 27.1."
