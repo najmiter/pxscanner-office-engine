@@ -78,6 +78,7 @@ jobs:
         run: |
           test -x /opt/homebrew/bin/pkg-config
           export PKG_CONFIG=/opt/homebrew/bin/pkg-config
+          export PKG_CONFIG_FOR_BUILD=/opt/homebrew/bin/pkg-config
           make --version | head -1
           bison --version | head -1
           flex --version
