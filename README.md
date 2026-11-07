@@ -6,7 +6,7 @@ Builds the [LibreOffice](https://www.libreoffice.org) core for Android and iOS s
 
 Run the **Build engine** workflow from the Actions tab and pick a LibreOffice core tag. It builds `arm64-v8a`, `armeabi-v7a` and `x86_64` with NDK 28.2.13676358, checks that the 64-bit libraries are 16 KB page aligned, and publishes a release named `engine-<tag>-r<run>`.
 
-Run the **Build iOS engine** workflow for iOS. It builds the `LibreOfficeiOS` distro for arm64 devices with Xcode 27.1 and publishes a release named `engine-ios-<tag>-r<run>`. LibreOffice only supports x86_64 for the iOS simulator, so there is no simulator build.
+Run the **Build iOS engine** workflow for iOS. It builds the `LibreOfficeiOS` distro for arm64 devices with Xcode 27.1, raising LibreOffice's iOS deployment target from 14.5 to 18.0 because Xcode 27's libc++ no longer supports iOS versions before 15, and publishes a release named `engine-ios-<tag>-r<run>`. LibreOffice only supports x86_64 for the iOS simulator, so there is no simulator build.
 
 ## Release contents
 
@@ -18,4 +18,4 @@ iOS releases contain `pxscanner-office-engine-ios-arm64.tar.gz` with `lib` (ever
 
 ## License
 
-The binaries are built from unmodified LibreOffice sources, which are available under the [Mozilla Public License 2.0](https://www.mozilla.org/MPL/2.0/) at https://github.com/LibreOffice/core. Bundled third-party components keep their own licenses, included in each archive under `licenses/`.
+The binaries are built from LibreOffice sources (unmodified, apart from the iOS deployment target described above), which are available under the [Mozilla Public License 2.0](https://www.mozilla.org/MPL/2.0/) at https://github.com/LibreOffice/core. Bundled third-party components keep their own licenses, included in each archive under `licenses/`.

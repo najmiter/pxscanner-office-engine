@@ -73,6 +73,13 @@ jobs:
       - name: Check out LibreOffice
         run: git clone --depth 1 --branch "$LO_TAG" https://github.com/LibreOffice/core.git "$SRC"
 
+      - name: Set iOS deployment target
+        working-directory: ${{ env.SRC }}
+        run: |
+          test "$(grep -c -- '-miphoneos-version-min=14.5' configure.ac)" = 1
+          sed -i '' 's/-miphoneos-version-min=14\.5/-miphoneos-version-min=18.0/' configure.ac
+          grep -n -- '-miphoneos-version-min=' configure.ac
+
       - name: Configure
         working-directory: ${{ env.SRC }}
         run: |
