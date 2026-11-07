@@ -92,9 +92,7 @@ jobs:
           cat > autogen.input <<EOF
           --with-distro=LibreOfficeiOS
           --without-dotnet
-          --disable-curl
-          --disable-libcmis
-          --without-webdav
+          --enable-openssl
           --with-external-tar=$TARBALLS
           --with-parallelism=$(sysctl -n hw.ncpu)
           EOF
