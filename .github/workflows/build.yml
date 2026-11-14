@@ -7,6 +7,14 @@ on:
         description: LibreOffice core tag to build
         required: true
         default: libreoffice-26.8.2.2
+      abis:
+        description: Comma-separated ABIs to build
+        required: true
+        default: arm64-v8a,armeabi-v7a,x86_64
+      diagnostic:
+        description: Enable LibreOffice logging, keep the unstripped library and publish a prerelease
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -14,22 +22,42 @@ permissions:
 env:
   NDK_VERSION: 28.2.13676358
   LO_TAG: ${{ inputs.libreoffice_tag }}
+  DIAGNOSTIC: ${{ inputs.diagnostic }}
 
 jobs:
+  matrix:
+    name: Select ABIs
+    runs-on: ubuntu-24.04
+    outputs:
+      include: ${{ steps.select.outputs.include }}
+    steps:
+      - id: select
+        env:
+          ABIS: ${{ inputs.abis }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          distros = {
+              "arm64-v8a": "LibreOfficeAndroidAarch64",
+              "armeabi-v7a": "LibreOfficeAndroid",
+              "x86_64": "LibreOfficeAndroidX86_64",
+          }
+          abis = [abi.strip() for abi in os.environ["ABIS"].split(",") if abi.strip()]
+          unknown = [abi for abi in abis if abi not in distros]
+          if unknown or not abis:
+              raise SystemExit(f"Unknown ABIs: {unknown}")
+          print("include=" + json.dumps([{"abi": abi, "distro": distros[abi]} for abi in abis]))
+          PY
+
   build:
     name: Build ${{ matrix.abi }}
+    needs: matrix
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - abi: arm64-v8a
-            distro: LibreOfficeAndroidAarch64
-          - abi: armeabi-v7a
-            distro: LibreOfficeAndroid
-          - abi: x86_64
-            distro: LibreOfficeAndroidX86_64
+        include: ${{ fromJSON(needs.matrix.outputs.include) }}
     env:
       CCACHE_DIR: /mnt/ccache
       CCACHE_MAXSIZE: 3G
@@ -65,10 +93,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /mnt/ccache
-          key: ccache-${{ matrix.abi }}-${{ env.LO_TAG }}-${{ github.run_id }}
+          key: ccache-${{ inputs.diagnostic && 'diag-' || '' }}${{ matrix.abi }}-${{ env.LO_TAG }}-${{ github.run_id }}
           restore-keys: |
-            ccache-${{ matrix.abi }}-${{ env.LO_TAG }}-
-            ccache-${{ matrix.abi }}-
+            ccache-${{ inputs.diagnostic && 'diag-' || '' }}${{ matrix.abi }}-${{ env.LO_TAG }}-
+            ccache-${{ inputs.diagnostic && 'diag-' || '' }}${{ matrix.abi }}-
 
       - name: Restore external tarballs
         uses: actions/cache@v4
@@ -93,6 +121,7 @@ jobs:
           --with-external-tar=$TARBALLS
           --with-parallelism=$(nproc)
           EOF
+          if [ "$DIAGNOSTIC" = "true" ]; then echo "--enable-sal-log" >> autogen.input; fi
           ./autogen.sh
 
       - name: Build
@@ -131,16 +160,24 @@ jobs:
           cp -r android/source/assets_strippedUI "$out/engine/assets_strippedUI"
           find instdir -maxdepth 2 \( -iname 'LICENSE*' -o -iname 'NOTICE*' -o -iname 'CREDITS*' \) -type f \
             -exec cp {} "$out/engine/licenses/" \;
-          printf 'libreoffice_tag=%s\nlibreoffice_commit=%s\nabi=%s\nndk=%s\n' \
-            "$LO_TAG" "$(git rev-parse HEAD)" "${{ matrix.abi }}" "$NDK_VERSION" > "$out/engine/BUILD_INFO"
+          printf 'libreoffice_tag=%s\nlibreoffice_commit=%s\nabi=%s\nndk=%s\ndiagnostic=%s\n' \
+            "$LO_TAG" "$(git rev-parse HEAD)" "${{ matrix.abi }}" "$NDK_VERSION" "$DIAGNOSTIC" > "$out/engine/BUILD_INFO"
           tar -C "$out/engine" -czf "$out/pxscanner-office-engine-${{ matrix.abi }}.tar.gz" .
+          if [ "$DIAGNOSTIC" = "true" ]; then
+            find . -name 'liblo-native-code.so' -type f -printf '%s %p\n' | sort -n
+            unstripped=$(find . -name 'liblo-native-code.so' -type f -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+            mkdir -p "$out/symbols"
+            cp "$unstripped" "$out/symbols/liblo-native-code.so"
+            tar -C "$out/symbols" -czf "$out/pxscanner-office-symbols-${{ matrix.abi }}.tar.gz" .
+            rm -rf "$out/symbols"
+          fi
           ls -lh "$out"
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: engine-${{ matrix.abi }}
-          path: out/pxscanner-office-engine-${{ matrix.abi }}.tar.gz
+          path: out/pxscanner-office-*-${{ matrix.abi }}.tar.gz
           if-no-files-found: error
 
   release:
@@ -168,7 +205,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "engine-$LO_TAG-r${{ github.run_number }}" dist/* \
+          suffix=""
+          flags=""
+          if [ "$DIAGNOSTIC" = "true" ]; then suffix="-diag"; flags="--prerelease"; fi
+          gh release create "engine-$LO_TAG-r${{ github.run_number }}$suffix" dist/* $flags \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Engine $LO_TAG (build ${{ github.run_number }})" \
-            --notes "LibreOffice $LO_TAG built for Android with NDK $NDK_VERSION."
+            --title "Engine $LO_TAG (build ${{ github.run_number }}$suffix)" \
+            --notes "LibreOffice $LO_TAG built for Android with NDK $NDK_VERSION. ABIs: ${{ inputs.abis }}. Diagnostic: $DIAGNOSTIC."
