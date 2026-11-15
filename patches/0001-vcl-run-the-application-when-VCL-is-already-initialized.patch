@@ -1,0 +1,18 @@
+vcl: run the application when VCL is already initialized
+
+LibreOfficeKit initializes VCL before lo_runLoop calls soffice_main, so
+since caa4036188 ImplSVMain returned without running Desktop::Main and
+the unipoll main loop ended at once. Run ImplSVMainRun in that case, as
+ImplSVMain did before.
+
+--- a/vcl/source/app/svmain.cxx
++++ b/vcl/source/app/svmain.cxx
+@@ -194,7 +194,7 @@
+     SAL_WARN_IF( !pSVData->mpApp, "vcl", "no instance of class Application" );
+ 
+     if ( IsVCLInit() )
+-        return EXIT_SUCCESS;
++        return ImplSVMainRun();
+ 
+ #if !defined(_WIN32) && !defined(SYSTEM_OPENSSL)
+     static constexpr OUString name(u"SSL_CERT_FILE"_ustr);

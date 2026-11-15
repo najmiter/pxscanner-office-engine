@@ -107,8 +107,20 @@ jobs:
             tarballs-${{ env.LO_TAG }}-
             tarballs-
 
+      - name: Check out patches
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: patches
+
       - name: Check out LibreOffice
         run: git clone --depth 1 --branch "$LO_TAG" https://github.com/LibreOffice/core.git "$SRC"
+
+      - name: Apply patches
+        working-directory: /mnt/lo/core
+        run: |
+          for patch in "$GITHUB_WORKSPACE"/patches/*.patch; do
+            git apply --verbose "$patch"
+          done
 
       - name: Configure
         working-directory: /mnt/lo/core
@@ -160,8 +172,9 @@ jobs:
           cp -r android/source/assets_strippedUI "$out/engine/assets_strippedUI"
           find instdir -maxdepth 2 \( -iname 'LICENSE*' -o -iname 'NOTICE*' -o -iname 'CREDITS*' \) -type f \
             -exec cp {} "$out/engine/licenses/" \;
-          printf 'libreoffice_tag=%s\nlibreoffice_commit=%s\nabi=%s\nndk=%s\ndiagnostic=%s\n' \
-            "$LO_TAG" "$(git rev-parse HEAD)" "${{ matrix.abi }}" "$NDK_VERSION" "$DIAGNOSTIC" > "$out/engine/BUILD_INFO"
+          printf 'libreoffice_tag=%s\nlibreoffice_commit=%s\nabi=%s\nndk=%s\ndiagnostic=%s\npatches=%s\n' \
+            "$LO_TAG" "$(git rev-parse HEAD)" "${{ matrix.abi }}" "$NDK_VERSION" "$DIAGNOSTIC" \
+            "$(cd "$GITHUB_WORKSPACE/patches" && ls *.patch | paste -sd, -)" > "$out/engine/BUILD_INFO"
           tar -C "$out/engine" -czf "$out/pxscanner-office-engine-${{ matrix.abi }}.tar.gz" .
           if [ "$DIAGNOSTIC" = "true" ]; then
             find . -name 'liblo-native-code.so' -type f -printf '%s %p\n' | sort -n
